@@ -4,6 +4,9 @@ A 0 dependency, no_std implementation of AES128, AES192 and AES256 ciphers.
 ## Motivation
 I wanted to see if I could implement AES (Advanced Encryption Standard) by reading the specifications. The examples in the specifications helped me to formulate the tests to prove I have implemented it correctly.
 
+## Implementation Considerations
+This implementation makes use of look-up tables and is thus not fully protected against side channel attacks.
+
 ## Documentation
 Documentation can be found here: https://docs.rs/fips197
 
