@@ -2,6 +2,17 @@
 name = "fips197"
 version = "0.1.0"
 edition = "2021"
+license = "ISC"
+description = "A 0 dependency, no_std implementation of AES128, AES192 and AES256 ciphers."
+readme = "README.md"
+exclude = ["target", "Cargo.lock"]
+documentation = "https://docs.rs/fips197"
+repository = "https://github.com/auronandace/fips197"
+homepage = "https://github.com/auronandace/fips197"
+
+[lib]
+name = "fips197"
+path = "src/lib.rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
