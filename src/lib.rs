@@ -5,6 +5,8 @@
 //! It is a `#![no_std]` crate that does not require [alloc](https://doc.rust-lang.org/alloc/index.html) and
 //! has no dependencies.
 //!
+//! It currently uses lookup tables internally and is therefore not fully resistant to side channel attacks.
+//!
 //! ## Usage
 //!
 //! There are only 6 public functions. Two for each AES variant. One intended for application of the cipher on
@@ -25,64 +27,94 @@ impl State {
             [input[12], input[13], input[14], input[15]],
         ]}
     }
-    fn xor_roundkey(&mut self, input: [u8;16]) {
-        self.state[0][0] ^= input[0];
-        self.state[0][1] ^= input[1];
-        self.state[0][2] ^= input[2];
-        self.state[0][3] ^= input[3];
-        self.state[1][0] ^= input[4];
-        self.state[1][1] ^= input[5];
-        self.state[1][2] ^= input[6];
-        self.state[1][3] ^= input[7];
-        self.state[2][0] ^= input[8];
-        self.state[2][1] ^= input[9];
-        self.state[2][2] ^= input[10];
-        self.state[2][3] ^= input[11];
-        self.state[3][0] ^= input[12];
-        self.state[3][1] ^= input[13];
-        self.state[3][2] ^= input[14];
-        self.state[3][3] ^= input[15];
+    const fn xor_roundkey(self, input: [u8;16]) -> Self {
+        Self{state: [
+            [
+                self.state[0][0] ^ input[0],
+                self.state[0][1] ^ input[1],
+                self.state[0][2] ^ input[2],
+                self.state[0][3] ^ input[3],
+            ],
+            [
+                self.state[1][0] ^ input[4],
+                self.state[1][1] ^ input[5],
+                self.state[1][2] ^ input[6],
+                self.state[1][3] ^ input[7],
+            ],
+            [
+                self.state[2][0] ^ input[8],
+                self.state[2][1] ^ input[9],
+                self.state[2][2] ^ input[10],
+                self.state[2][3] ^ input[11],
+            ],
+            [
+                self.state[3][0] ^ input[12],
+                self.state[3][1] ^ input[13],
+                self.state[3][2] ^ input[14],
+                self.state[3][3] ^ input[15],
+            ],
+        ]}
     }
-    fn sub_bytes(&mut self, inverse: bool) {
-        for column in &mut self.state {
-            for byte in column {
-                *byte = substitute_byte(*byte, inverse);
+    const fn sub_bytes(self, inverse: bool) -> Self {
+        let mut state = [[0;4];4];
+        let mut outer_index = 0;
+        while outer_index != 4 {
+            let column = self.state[outer_index];
+            let mut inner_index = 0;
+            while inner_index != 4 {
+                state[outer_index][inner_index] = substitute_byte(column[inner_index], inverse);
+                inner_index += 1;
             }
+            outer_index += 1;
         }
+        Self{state}
     }
-    fn shift_rows(&mut self, i: bool) { // i = inverse
-        self.state = [
+    const fn shift_rows(self, i: bool) -> Self { // i = inverse
+        Self{state: [
             [self.state[0][0], self.state[if i {3} else {1}][1], self.state[2][2], self.state[if i {1} else {3}][3]],
             [self.state[1][0], self.state[if i {0} else {2}][1], self.state[3][2], self.state[if i {2} else {0}][3]],
             [self.state[2][0], self.state[if i {1} else {3}][1], self.state[0][2], self.state[if i {3} else {1}][3]],
             [self.state[3][0], self.state[if i {2} else {0}][1], self.state[1][2], self.state[if i {0} else {2}][3]],
-        ];
+        ]}
     }
-    fn mix_cols(&mut self, inverse: bool) {
-        for col in &mut self.state {
-            let copy = *col;
+    const fn mix_cols(self, inverse: bool) -> Self {
+        let mut state = [[0;4];4];
+        let mut i = 0; // index
+        while i != 4 {
+            let copy = self.state[i];
             if inverse {
-                col[0] = MUL14[copy[0] as usize]^MUL11[copy[1] as usize]^MUL13[copy[2] as usize]^MUL9[copy[3] as usize];
-                col[1] = MUL9[copy[0] as usize]^MUL14[copy[1] as usize]^MUL11[copy[2] as usize]^MUL13[copy[3] as usize];
-                col[2] = MUL13[copy[0] as usize]^MUL9[copy[1] as usize]^MUL14[copy[2] as usize]^MUL11[copy[3] as usize];
-                col[3] = MUL11[copy[0] as usize]^MUL13[copy[1] as usize]^MUL9[copy[2] as usize]^MUL14[copy[3] as usize];
+                state[i][0] = MUL14[copy[0] as usize]^MUL11[copy[1] as usize]^MUL13[copy[2] as usize]^MUL9[copy[3] as usize];
+                state[i][1] = MUL9[copy[0] as usize]^MUL14[copy[1] as usize]^MUL11[copy[2] as usize]^MUL13[copy[3] as usize];
+                state[i][2] = MUL13[copy[0] as usize]^MUL9[copy[1] as usize]^MUL14[copy[2] as usize]^MUL11[copy[3] as usize];
+                state[i][3] = MUL11[copy[0] as usize]^MUL13[copy[1] as usize]^MUL9[copy[2] as usize]^MUL14[copy[3] as usize];
             } else {
-                col[0] = MUL2[copy[0] as usize]^MUL3[copy[1] as usize]^copy[2]^copy[3];
-                col[1] = copy[0]^MUL2[copy[1] as usize]^MUL3[copy[2] as usize]^copy[3];
-                col[2] = copy[0]^copy[1]^MUL2[copy[2] as usize]^MUL3[copy[3] as usize];
-                col[3] = MUL3[copy[0] as usize]^copy[1]^copy[2]^MUL2[copy[3] as usize];
+                state[i][0] = MUL2[copy[0] as usize]^MUL3[copy[1] as usize]^copy[2]^copy[3];
+                state[i][1] = copy[0]^MUL2[copy[1] as usize]^MUL3[copy[2] as usize]^copy[3];
+                state[i][2] = copy[0]^copy[1]^MUL2[copy[2] as usize]^MUL3[copy[3] as usize];
+                state[i][3] = MUL3[copy[0] as usize]^copy[1]^copy[2]^MUL2[copy[3] as usize];
             }
+            i += 1;
         }
+        Self{state}
     }
 }
 
 const R: [u8;10] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36];
 
-#[derive(Clone, Copy, PartialEq)]
-enum KeyLength {
-    L128,
-    L192,
-    L256,
+enum KeyInput {
+    L128([u8;16]),
+    L192([u8;24]),
+    L256([u8;32]),
+}
+
+impl KeyInput {
+    const fn get(&self, index: usize) -> u8 {
+        match self {
+            Self::L128(inner) => inner[index],
+            Self::L192(inner) => inner[index],
+            Self::L256(inner) => inner[index],
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -93,48 +125,23 @@ enum KeySchedule {
 }
 
 impl KeySchedule {
-    fn new128(input: [u8;16]) -> Self {
-        let mut all = [[0;4];44];
-        Self::insert_first_key(&mut all, &input, KeyLength::L128);
-        Self::generate_remaining_words(&mut all, 4, 44);
-        let mut keys = [[0;16];11];
-        Self::all_to_keys(&all, &mut keys);
-        Self::Ks128(keys)
-    }
-    fn new192(input: [u8;24]) -> Self {
-        let mut all = [[0;4];52];
-        Self::insert_first_key(&mut all, &input, KeyLength::L192);
-        Self::generate_remaining_words(&mut all, 6, 52);
-        let mut keys = [[0;16];13];
-        Self::all_to_keys(&all, &mut keys);
-        Self::Ks192(keys)
-    }
-    fn new256(input: [u8;32]) -> Self {
+    const fn new(input: &KeyInput) -> Self {
         let mut all = [[0;4];60];
-        Self::insert_first_key(&mut all, &input, KeyLength::L256);
-        Self::generate_remaining_words(&mut all, 8, 60);
-        let mut keys = [[0;16];15];
-        Self::all_to_keys(&all, &mut keys);
-        Self::Ks256(keys)
-    }
-    fn insert_first_key(all: &mut[[u8;4]], input: &[u8], key_length: KeyLength) {
-        all[0] = [input[0], input[1], input[2], input[3]];
-        all[1] = [input[4], input[5], input[6], input[7]];
-        all[2] = [input[8], input[9], input[10], input[11]];
-        all[3] = [input[12], input[13], input[14], input[15]];
-        if key_length != KeyLength::L128 {
-            all[4] = [input[16], input[17], input[18], input[19]];
-            all[5] = [input[20], input[21], input[22], input[23]];
+        let mut index = 0;
+        let (lower_bound, upper_bound) = match input {
+            KeyInput::L128(_) => (4, 44),
+            KeyInput::L192(_) => (6, 52),
+            KeyInput::L256(_) => (8, 60),
+        };
+        let (mut byte_one, mut byte_two, mut byte_three, mut byte_four) = (0,1,2,3);
+        while index != lower_bound {
+            all[index] = [input.get(byte_one), input.get(byte_two), input.get(byte_three), input.get(byte_four)];
+            byte_one += 4; byte_two += 4; byte_three += 4; byte_four += 4;
+            index += 1;
         }
-        if key_length == KeyLength::L256 {
-            all[6] = [input[24], input[25], input[26], input[27]];
-            all[7] = [input[28], input[29], input[30], input[31]];
-        }
-    }
-    fn generate_remaining_words(all: &mut[[u8;4]], lower_bound: usize, upper_bound: usize) {
         let mut word;
         let mut r_index = 0;
-        for index in lower_bound..upper_bound {
+        while index != upper_bound {
             word = all[index-1];
             if index % lower_bound == 0 {
                 let mut temp = sub_word(rot_word(word), false);
@@ -150,45 +157,54 @@ impl KeySchedule {
                 all[index-lower_bound][2]^word[2],
                 all[index-lower_bound][3]^word[3]
             ];
+            index += 1;
         }
-    }
-    fn all_to_keys(all: &[[u8;4]], keys: &mut[[u8;16]]) {
+        let mut keys = [[0;16];15];
         let mut counter = 0;
         let mut key_counter = 0;
-        for each in all {
+        index = 0;
+        while index != 60 {
             if counter == 0 {
-                keys[key_counter][0] = each[0];
-                keys[key_counter][1] = each[1];
-                keys[key_counter][2] = each[2];
-                keys[key_counter][3] = each[3];
+                keys[key_counter][0] = all[index][0];
+                keys[key_counter][1] = all[index][1];
+                keys[key_counter][2] = all[index][2];
+                keys[key_counter][3] = all[index][3];
             } else if counter == 1 {
-                keys[key_counter][4] = each[0];
-                keys[key_counter][5] = each[1];
-                keys[key_counter][6] = each[2];
-                keys[key_counter][7] = each[3];
+                keys[key_counter][4] = all[index][0];
+                keys[key_counter][5] = all[index][1];
+                keys[key_counter][6] = all[index][2];
+                keys[key_counter][7] = all[index][3];
             } else if counter == 2 {
-                keys[key_counter][8] = each[0];
-                keys[key_counter][9] = each[1];
-                keys[key_counter][10] = each[2];
-                keys[key_counter][11] = each[3];
+                keys[key_counter][8] = all[index][0];
+                keys[key_counter][9] = all[index][1];
+                keys[key_counter][10] = all[index][2];
+                keys[key_counter][11] = all[index][3];
             } else {
-                keys[key_counter][12] = each[0];
-                keys[key_counter][13] = each[1];
-                keys[key_counter][14] = each[2];
-                keys[key_counter][15] = each[3];
+                keys[key_counter][12] = all[index][0];
+                keys[key_counter][13] = all[index][1];
+                keys[key_counter][14] = all[index][2];
+                keys[key_counter][15] = all[index][3];
                 key_counter += 1;
             }
             if counter < 3 {counter += 1;} else {counter = 0;}
+            index += 1;
+        }
+        match input {
+            KeyInput::L128(_) => Self::Ks128([keys[0], keys[1], keys[2], keys[3], keys[4], keys[5], keys[6], keys[7],
+                keys[8], keys[9], keys[10]]),
+            KeyInput::L192(_) => Self::Ks192([keys[0], keys[1], keys[2], keys[3], keys[4], keys[5], keys[6], keys[7],
+                keys[8], keys[9], keys[10], keys[11], keys[12]]),
+            KeyInput::L256(_) => Self::Ks256(keys),
         }
     }
-    fn reverse(&mut self) {
+    const fn reverse(self) -> Self {
         match self {
-            Self::Ks128(inner) => inner.reverse(),
-            Self::Ks192(inner) => inner.reverse(),
-            Self::Ks256(inner) => inner.reverse(),
+            Self::Ks128(i) => Self::Ks128([i[10],i[9],i[8],i[7],i[6],i[5],i[4],i[3],i[2],i[1],i[0]]),
+            Self::Ks192(i) => Self::Ks192([i[12],i[11],i[10],i[9],i[8],i[7],i[6],i[5],i[4],i[3],i[2],i[1],i[0]]),
+            Self::Ks256(i) => Self::Ks256([i[14],i[13],i[12],i[11],i[10],i[9],i[8],i[7],i[6],i[5],i[4],i[3],i[2],i[1],i[0]]),
         }
     }
-    fn get(&self, index: usize) -> [u8;16] {
+    const fn get(&self, index: usize) -> [u8;16] {
         match self {
             Self::Ks128(inner) => inner[index],
             Self::Ks192(inner) => inner[index],
@@ -361,31 +377,33 @@ const fn substitute_byte(index: u8, inverse: bool) -> u8 {
     if inverse {SUB_BOX[index as usize].0} else {SUB_BOX[index as usize].1}
 }
 
-fn cipher(input: [u8;16], rounds: usize, mut key_schedule: KeySchedule, inverse: bool) -> [u8;16] {
+const fn cipher(input: [u8;16], rounds: usize, mut key_schedule: KeySchedule, inverse: bool) -> [u8;16] {
     let mut internal = State::new(input);
-    if inverse {key_schedule.reverse();}
-    internal.xor_roundkey(key_schedule.get(0));
-    for index in 1..rounds {
+    if inverse {key_schedule = key_schedule.reverse();}
+    internal = internal.xor_roundkey(key_schedule.get(0));
+    let mut index = 1;
+    while index != rounds {
         if inverse {
-            internal.shift_rows(inverse);
-            internal.sub_bytes(inverse);
-            internal.xor_roundkey(key_schedule.get(index));
-            internal.mix_cols(inverse);
+            internal = internal.shift_rows(inverse);
+            internal = internal.sub_bytes(inverse);
+            internal = internal.xor_roundkey(key_schedule.get(index));
+            internal = internal.mix_cols(inverse);
         } else {
-            internal.sub_bytes(inverse);
-            internal.shift_rows(inverse);
-            internal.mix_cols(inverse);
-            internal.xor_roundkey(key_schedule.get(index));
+            internal = internal.sub_bytes(inverse);
+            internal = internal.shift_rows(inverse);
+            internal = internal.mix_cols(inverse);
+            internal = internal.xor_roundkey(key_schedule.get(index));
         }
+        index += 1;
     }
     if inverse {
-        internal.shift_rows(inverse);
-        internal.sub_bytes(inverse);
+        internal = internal.shift_rows(inverse);
+        internal = internal.sub_bytes(inverse);
     } else {
-        internal.sub_bytes(inverse);
-        internal.shift_rows(inverse);
+        internal = internal.sub_bytes(inverse);
+        internal = internal.shift_rows(inverse);
     }
-    internal.xor_roundkey(key_schedule.get(rounds));
+    internal = internal.xor_roundkey(key_schedule.get(rounds));
     [
         internal.state[0][0], internal.state[0][1], internal.state[0][2], internal.state[0][3],
         internal.state[1][0], internal.state[1][1], internal.state[1][2], internal.state[1][3],
@@ -411,8 +429,8 @@ fn cipher(input: [u8;16], rounds: usize, mut key_schedule: KeySchedule, inverse:
 ///     );
 /// ```
 #[must_use]
-pub fn aes128(input: [u8;16], cipher_key: [u8;16]) -> [u8;16] {
-    cipher(input, 10, KeySchedule::new128(cipher_key), false)
+pub const fn aes128(input: [u8;16], cipher_key: [u8;16]) -> [u8;16] {
+    cipher(input, 10, KeySchedule::new(&KeyInput::L128(cipher_key)), false)
 }
 
 /// Apply the AES128 inverse cipher to the input array.
@@ -432,8 +450,8 @@ pub fn aes128(input: [u8;16], cipher_key: [u8;16]) -> [u8;16] {
 ///     );
 /// ```
 #[must_use]
-pub fn aes128_inverse(input: [u8;16], cipher_key: [u8;16]) -> [u8;16] {
-    cipher(input, 10, KeySchedule::new128(cipher_key), true)
+pub const fn aes128_inverse(input: [u8;16], cipher_key: [u8;16]) -> [u8;16] {
+    cipher(input, 10, KeySchedule::new(&KeyInput::L128(cipher_key)), true)
 }
 
 /// Apply the AES192 cipher to the input array.
@@ -454,8 +472,8 @@ pub fn aes128_inverse(input: [u8;16], cipher_key: [u8;16]) -> [u8;16] {
 ///     );
 /// ```
 #[must_use]
-pub fn aes192(input: [u8;16], cipher_key: [u8;24]) -> [u8;16] {
-    cipher(input, 12, KeySchedule::new192(cipher_key), false)
+pub const fn aes192(input: [u8;16], cipher_key: [u8;24]) -> [u8;16] {
+    cipher(input, 12, KeySchedule::new(&KeyInput::L192(cipher_key)), false)
 }
 
 /// Apply the AES192 inverse cipher to the input array.
@@ -476,8 +494,8 @@ pub fn aes192(input: [u8;16], cipher_key: [u8;24]) -> [u8;16] {
 ///     );
 /// ```
 #[must_use]
-pub fn aes192_inverse(input: [u8;16], cipher_key: [u8;24]) -> [u8;16] {
-    cipher(input, 12, KeySchedule::new192(cipher_key), true)
+pub const fn aes192_inverse(input: [u8;16], cipher_key: [u8;24]) -> [u8;16] {
+    cipher(input, 12, KeySchedule::new(&KeyInput::L192(cipher_key)), true)
 }
 
 /// Apply the AES256 cipher to the input array.
@@ -498,8 +516,8 @@ pub fn aes192_inverse(input: [u8;16], cipher_key: [u8;24]) -> [u8;16] {
 ///     );
 /// ```
 #[must_use]
-pub fn aes256(input: [u8;16], cipher_key: [u8;32]) -> [u8;16] {
-    cipher(input, 14, KeySchedule::new256(cipher_key), false)
+pub const fn aes256(input: [u8;16], cipher_key: [u8;32]) -> [u8;16] {
+    cipher(input, 14, KeySchedule::new(&KeyInput::L256(cipher_key)), false)
 }
 
 /// Apply the AES256 inverse cipher to the input array.
@@ -520,13 +538,14 @@ pub fn aes256(input: [u8;16], cipher_key: [u8;32]) -> [u8;16] {
 ///     );
 /// ```
 #[must_use]
-pub fn aes256_inverse(input: [u8;16], cipher_key: [u8;32]) -> [u8;16] {
-    cipher(input, 14, KeySchedule::new256(cipher_key), true)
+pub const fn aes256_inverse(input: [u8;16], cipher_key: [u8;32]) -> [u8;16] {
+    cipher(input, 14, KeySchedule::new(&KeyInput::L256(cipher_key)), true)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{KeySchedule, State, sub_word, rot_word, aes128, aes128_inverse, aes192, aes192_inverse, aes256, aes256_inverse};
+    use super::{KeySchedule, KeyInput, State, sub_word, rot_word, aes128, aes128_inverse, aes192, aes192_inverse,
+        aes256, aes256_inverse};
     #[test]
     fn initial_state() {
         let input = [0x32, 0x43, 0xf6, 0xa8, 0x88, 0x5a, 0x30, 0x8d, 0x31, 0x31, 0x98, 0xa2, 0xe0, 0x37, 0x07, 0x34];
@@ -542,9 +561,9 @@ mod tests {
     fn xor_roundkey() {
         let input = [0x32, 0x43, 0xf6, 0xa8, 0x88, 0x5a, 0x30, 0x8d, 0x31, 0x31, 0x98, 0xa2, 0xe0, 0x37, 0x07, 0x34];
         let cipher_key = [0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c];
-        let mut internal = State::new(input);
-        internal.xor_roundkey(cipher_key);
-        assert_eq!(internal.state, [
+        let internal = State::new(input);
+        let output = internal.xor_roundkey(cipher_key);
+        assert_eq!(output.state, [
             [0x19, 0x3d, 0xe3, 0xbe],
             [0xa0, 0xf4, 0xe2, 0x2b],
             [0x9a, 0xc6, 0x8d, 0x2a],
@@ -556,8 +575,8 @@ mod tests {
         let input = [0x32, 0x43, 0xf6, 0xa8, 0x88, 0x5a, 0x30, 0x8d, 0x31, 0x31, 0x98, 0xa2, 0xe0, 0x37, 0x07, 0x34];
         let cipher_key = [0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c];
         let mut internal = State::new(input);
-        internal.xor_roundkey(cipher_key);
-        internal.sub_bytes(false);
+        internal = internal.xor_roundkey(cipher_key);
+        internal = internal.sub_bytes(false);
         assert_eq!(internal.state, [
             [0xd4, 0x27, 0x11, 0xae],
             [0xe0, 0xbf, 0x98, 0xf1],
@@ -570,9 +589,9 @@ mod tests {
         let input = [0x32, 0x43, 0xf6, 0xa8, 0x88, 0x5a, 0x30, 0x8d, 0x31, 0x31, 0x98, 0xa2, 0xe0, 0x37, 0x07, 0x34];
         let cipher_key = [0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c];
         let mut internal = State::new(input);
-        internal.xor_roundkey(cipher_key);
-        internal.sub_bytes(false);
-        internal.shift_rows(false);
+        internal = internal.xor_roundkey(cipher_key);
+        internal = internal.sub_bytes(false);
+        internal = internal.shift_rows(false);
         assert_eq!(internal.state, [
             [0xd4, 0xbf, 0x5d, 0x30],
             [0xe0, 0xb4, 0x52, 0xae],
@@ -585,10 +604,10 @@ mod tests {
         let input = [0x32, 0x43, 0xf6, 0xa8, 0x88, 0x5a, 0x30, 0x8d, 0x31, 0x31, 0x98, 0xa2, 0xe0, 0x37, 0x07, 0x34];
         let cipher_key = [0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c];
         let mut internal = State::new(input);
-        internal.xor_roundkey(cipher_key);
-        internal.sub_bytes(false);
-        internal.shift_rows(false);
-        internal.mix_cols(false);
+        internal = internal.xor_roundkey(cipher_key);
+        internal = internal.sub_bytes(false);
+        internal = internal.shift_rows(false);
+        internal = internal.mix_cols(false);
         assert_eq!(internal.state, [
             [0x04, 0x66, 0x81, 0xe5],
             [0xe0, 0xcb, 0x19, 0x9a],
@@ -609,7 +628,7 @@ mod tests {
     #[test]
     fn key_schedule128() {
         let cipher_key = [0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c];
-        let schedule = KeySchedule::new128(cipher_key);
+        let schedule = KeySchedule::new(&KeyInput::L128(cipher_key));
         assert_eq!(schedule, KeySchedule::Ks128([
             [0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c],
             [0xa0, 0xfa, 0xfe, 0x17, 0x88, 0x54, 0x2c, 0xb1, 0x23, 0xa3, 0x39, 0x39, 0x2a, 0x6c, 0x76, 0x05],
@@ -628,7 +647,7 @@ mod tests {
     fn key_schedule192() {
         let cipher_key = [0x8e, 0x73, 0xb0, 0xf7, 0xda, 0x0e, 0x64, 0x52, 0xc8, 0x10, 0xf3, 0x2b,
                           0x80, 0x90, 0x79, 0xe5, 0x62, 0xf8, 0xea, 0xd2, 0x52, 0x2c, 0x6b, 0x7b];
-        let schedule = KeySchedule::new192(cipher_key);
+        let schedule = KeySchedule::new(&KeyInput::L192(cipher_key));
         assert_eq!(schedule, KeySchedule::Ks192([
             [0x8e, 0x73, 0xb0, 0xf7, 0xda, 0x0e, 0x64, 0x52, 0xc8, 0x10, 0xf3, 0x2b, 0x80, 0x90, 0x79, 0xe5],
             [0x62, 0xf8, 0xea, 0xd2, 0x52, 0x2c, 0x6b, 0x7b, 0xfe, 0x0c, 0x91, 0xf7, 0x24, 0x02, 0xf5, 0xa5],
@@ -649,7 +668,7 @@ mod tests {
     fn key_schedule256() {
         let cipher_key = [0x60, 0x3d, 0xeb, 0x10, 0x15, 0xca, 0x71, 0xbe, 0x2b, 0x73, 0xae, 0xf0, 0x85, 0x7d, 0x77, 0x81,
                           0x1f, 0x35, 0x2c, 0x07, 0x3b, 0x61, 0x08, 0xd7, 0x2d, 0x98, 0x10, 0xa3, 0x09, 0x14, 0xdf, 0xf4];
-        let schedule = KeySchedule::new256(cipher_key);
+        let schedule = KeySchedule::new(&KeyInput::L256(cipher_key));
         assert_eq!(schedule, KeySchedule::Ks256([
             [0x60, 0x3d, 0xeb, 0x10, 0x15, 0xca, 0x71, 0xbe, 0x2b, 0x73, 0xae, 0xf0, 0x85, 0x7d, 0x77, 0x81],
             [0x1f, 0x35, 0x2c, 0x07, 0x3b, 0x61, 0x08, 0xd7, 0x2d, 0x98, 0x10, 0xa3, 0x09, 0x14, 0xdf, 0xf4],
