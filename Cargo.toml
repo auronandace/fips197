@@ -1,6 +1,6 @@
 [package]
 name = "fips197"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "ISC"
 description = "A 0 dependency, no_std implementation of AES128, AES192 and AES256 ciphers."
