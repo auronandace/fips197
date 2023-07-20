@@ -1,9 +1,11 @@
 [package]
 name = "fips197"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "ISC"
 description = "A 0 dependency, no_std implementation of AES128, AES192 and AES256 ciphers."
+categories = ["algorithms", "cryptography", "no-std", "no-std::no-alloc"]
+keywords = ["aes-128", "aes-192", "aes-256", "ciphers"]
 readme = "README.md"
 exclude = ["target", "Cargo.lock"]
 documentation = "https://docs.rs/fips197"
